@@ -1,0 +1,27 @@
+# Running this file generates a new file
+# This new file is self-replicating, and every time it is run, it will generate a copy of itself
+# The only difference is that each new iteration will also run one iteration of newton's method
+
+
+s = """# Python newton-rhapson quine
+# Running the file reproduces itself, except it also runs an iteration of newton's method to find the roots of a function
+# The roots of the default function are -1.61803, 0.61803, and 1
+
+s = {s_text}
+
+
+def input_function(x):
+    return x**3 - 2*x + 1
+
+iteration = {iteration}
+current_pos = {next_pos}
+epsilon = 10**-4
+derivative = (input_function(current_pos + epsilon / 2) - input_function(current_pos - epsilon / 2)) / epsilon
+
+next_pos = current_pos - input_function(current_pos) / derivative
+
+with open("Assignment 4 Newton Quine iteration " + str(iteration + 1) + ".py", "w+") as file:
+    file.write(s.format(s_text = chr(34) * 3 + s + chr(34) * 3, iteration = iteration + 1, next_pos=next_pos))"""
+
+with open("Assignment 4 Newton Quine iteration 1.py", "w+") as file:
+    file.write(s.format(s_text = chr(34) * 3 + s + chr(34) * 3, iteration = 1, next_pos = 0))
