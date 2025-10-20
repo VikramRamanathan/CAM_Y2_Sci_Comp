@@ -6,14 +6,16 @@ import re
 import sys
 import matplotlib.pyplot as plt
 
-# The idea is to convolve pre-defined pdfs together
+# This program takes dice expressions as input, and performs some preprocessing to obtain "dice primitives"
+# These primitives are then convolved together using fourier transforms, and the resultant distribution plotted
+# There is also an option to run a monte carlo simulation as well, which will be overlayed on the same plot
 
-# This took like 8 hours, terrible decision
+# This took like 9 hours, terrible decision
 
-# With the optimisations I've done, you can find the pdf of 1 million 6-sided dice without too much difficulty. Don't use the Monte Carlo for that.
+# With the optimisations I've done, you can find the pdf of 1 million 6-sided dice in about 40 seconds on my laptop. Don't use the Monte Carlo with that distribution.
 
 dice_dict = {}
-MAX_FTT_SIZE = 100 # It can actually be much higher but I'm being safe
+MAX_FTT_SIZE = 100 # It can actually be substantially higher but I'm being safe, since it depends on the dice being used
 
 def convolve_n_pdfs(arrays):
     max_sequence_length = max([len(i) for i in arrays])
@@ -323,7 +325,6 @@ def parse_input_and_generate_dice(input_string, dice_dict, do_not_convolve = Fal
         to_convolve_positive = temp
         max_fft_size_dynamic = max(10, int(max_fft_size_dynamic * max_fft_size_resizing_factor))
         total_offset_positive = total_offset_positive + sum(offsets)
-        print(total_offset_positive)
     
     
     max_fft_size_dynamic = MAX_FTT_SIZE
@@ -336,7 +337,7 @@ def parse_input_and_generate_dice(input_string, dice_dict, do_not_convolve = Fal
             convolved, zero_offset = convolve_n_pdfs(chunk)
             temp.append(convolved)
             offsets.append(zero_offset)
-        to_convolve_positive = temp
+        to_convolve_negative = temp
         max_fft_size_dynamic = max(10, int(max_fft_size_dynamic * max_fft_size_resizing_factor))
         total_offset_negative = total_offset_negative + sum(offsets)
     
@@ -356,14 +357,20 @@ def parse_input_and_generate_dice(input_string, dice_dict, do_not_convolve = Fal
             # The zero point moves from 0 to the max position in the negative
             
             zero_point = len(negative_convolution) - 1 - total_offset_positive + total_offset_negative - final_offset
+            
+            # Renormalising, only matters for absurdly large inputs
+            final_pdf = final_pdf / sum(final_pdf)
             return final_pdf, zero_point
         
+        print(sum(positive_convolution))
+        positive_convolution = positive_convolution / sum(positive_convolution)
         return positive_convolution, -total_offset_positive
     
     if len(to_convolve_negative) > 0:
         negative_convolution, negative_zero_offset = convolve_n_pdfs(to_convolve_negative)
         total_offset_negative = total_offset_negative + negative_zero_offset
         
+        negative_convolution = negative_convolution / sum(negative_convolution)
         return negative_convolution[::-1], len(negative_convolution) - 1 + total_offset_negative
     
     return [], None

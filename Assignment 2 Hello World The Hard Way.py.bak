@@ -1,14 +1,21 @@
 import numpy as np
+import matplotlib.pyplot as plt
 
 # Hello world, but in an unnecessarily difficult manner
 
-s = "Hello World!"
+user_input = input("Type in an input string, or type 0 to print Hello World!\n")
 
-y_values = [ord(i) for i in s]
-print("ASCII numbers of characters: " + str(y_values) + "\n")
+if user_input == "0":
+    user_input = "Hello World!"
+    
+if len(user_input) < 3: # I cannot be bothered to handle these cases properly
+    user_input = user_input.ljust(3)
+
+y_values = [ord(i) for i in user_input]
+print("\nASCII numbers of characters: " + str(y_values) + "\n")
 
 # Encoding this string as points on a Chebyshev polynomial
-degree = len(s)
+degree = len(user_input)
 x_values = np.linspace(-1, 1, degree)
 
 eqn_mat = np.zeros((degree, degree))
@@ -58,3 +65,14 @@ for i in range(degree):
 print("Evaluating polynomial at these normalised x-coordinates: " + str(evaluation_points) + "\n")
 
 print("".join(reconstructed_string))
+
+plotting_points = 100
+x_for_plotting = np.linspace(-1, 1, plotting_points)
+y_for_plotting = np.zeros((plotting_points))
+
+for i in range(plotting_points):
+    y_for_plotting[i] = evaluate_polynomial(coefficients, x_for_plotting[i])
+
+plt.plot(x_for_plotting, y_for_plotting)
+plt.title("The polynomial embedding the string")
+plt.show()

@@ -3,25 +3,42 @@
 # The only difference is that each new iteration will also run one iteration of newton's method
 
 
-s = """# Python newton-rhapson quine
-# Running the file reproduces itself, except it also runs an iteration of newton's method to find the roots of a function
-# The roots of the default function are -1.61803, 0.61803, and 1
+s = """# Python newton-raphson quine
+# Running the file reproduces itself, except it also runs an iteration of newton's method to find the roots of a cubic
 
 s = {s_text}
 
-
-def input_function(x):
-    return x**3 - 2*x + 1
+coefficients = [{a}, {b}, {c}, {d}]
+def input_function(x, coefficients):
+    return coefficients[0] * x ** 3 + coefficients[1] * x ** 2 + coefficients[2] * x + coefficients[3]
 
 iteration = {iteration}
 current_pos = {next_pos}
 epsilon = 10**-4
-derivative = (input_function(current_pos + epsilon / 2) - input_function(current_pos - epsilon / 2)) / epsilon
 
-next_pos = current_pos - input_function(current_pos) / derivative
+# Clamp derivative to reduce degenerate behaviour
+derivative = max((input_function(current_pos + epsilon / 2, coefficients) - input_function(current_pos - epsilon / 2, coefficients)) / epsilon, current_pos * 10)
+
+next_pos = current_pos - input_function(current_pos, coefficients) / derivative
+
+print("This iteration estimates there to be a zero at x = " + str(next_pos))
 
 with open("Assignment 4 Newton Quine iteration " + str(iteration + 1) + ".py", "w+") as file:
-    file.write(s.format(s_text = chr(34) * 3 + s + chr(34) * 3, iteration = iteration + 1, next_pos=next_pos))"""
+    file.write(s.format(s_text = chr(34) * 3 + s + chr(34) * 3, a=coefficients[0], b=coefficients[1], c=coefficients[2], d=coefficients[3], iteration = iteration + 1, next_pos=next_pos))
+    
+print("Next iteration generated, named 'Assignment 4 Newton Quine iteration " + str(iteration + 1) + ".py"'")"""
+
+print("This program takes as input a cubic function, and outputs a Quine (self replication program) that carries out Newton's method.")
+print("Please enter the coefficients of the cubic you would like to evaluate in the form a b c d,\nwhere the cubic is of the form ax^3 + bx^2 + cx + d.")
+coefficients = input("I would suggest having a nonzero d coefficient, or you will get a\ntrivial zero of the function, since it's initialised at 0.\n\nCoefficients: ")
+try:
+    coefficients = [int(i) for i in coefficients.split(" ")]
+except:
+    ValueError("Invalid input, terminating")
+
+starting_pos = 0
 
 with open("Assignment 4 Newton Quine iteration 1.py", "w+") as file:
-    file.write(s.format(s_text = chr(34) * 3 + s + chr(34) * 3, iteration = 1, next_pos = 0))
+    file.write(s.format(s_text = chr(34) * 3 + s + chr(34) * 3, a=coefficients[0], b=coefficients[1], c=coefficients[2], d=coefficients[3], iteration = 1, next_pos = starting_pos))
+
+print("Quine generated, named 'Assignment 4 Newton Quine iteration 1.py'")
