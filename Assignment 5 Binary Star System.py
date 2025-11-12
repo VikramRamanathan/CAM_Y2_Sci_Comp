@@ -1,0 +1,157 @@
+import numpy as np
+import matplotlib.pyplot as plt
+from matplotlib.animation import FuncAnimation, FFMpegWriter
+from functools import partial
+
+
+# This program initialises an approximation of the solar system, with all major planets (and pluto) as 'massive' objects
+# and one asteroid belt of non-massive particles. A rogue star is also introduced into the system, to observe how it disrupts and ejects the outer solar system.
+
+
+# Units of seconds, so about a day and a half. Which is still a bit high at times
+# Around 500 years there's one particular planet that has a nasty encounter with the incoming star and gets launched, tragically I would need to drop the timestep size a lot to fix that
+timestep_size = 125000
+distance_of_infinity = 10**8 # Take this to be arbitrarily far away
+au = 149597871000
+G = 6.6743 * 10**-11
+canvas_size = 100 * au
+
+
+positions = []
+velocities = []
+
+# The Sun, Jupiter, Saturn, Uranus, Neptune, Earth, Venus, Mars, Mercury, and Pluto, in that order. And then a rogue star
+# Parameters of objects which will have mass
+massive_body_positions = [[0, 0], [0, 5.2 * au], [9.5 * au, 0], [0, -19.2 * au], [-au * 30.1, 0], [0, au], [0.72 * au, 0], [0, -1.52 * au], [-0.39 *au, 0], [0, 49.6 * au], [-50 * au, 10 * au]]
+massive_body_velocities = [[0, 0], [-13100, 0], [0, 9700], [6800, 0], [0, -5400], [-29800, 0], [0, 35000], [24100, 0], [0, -47900], [-3710, 0], [2000, 2000]]
+massive_body_masses = np.array([1988500000 * 10**21, 1898187 * 10**21, 568317 * 10**21, 86813 * 10**21, 102413 * 10**21, 5972.4 * 10**21,
+    4867.5 * 10**21, 641.71 * 10**21, 330.11 * 10**21, 13.03 * 10**21, 198850000 * 10**21], dtype=np.float32) # Masses of said massive bodies, arbitrary units
+
+# Init Asteroid cloud
+
+cloud_particle_count = 30
+starting_rad = 2.8 * au
+r = np.random.normal(starting_rad, 0.3 * au, cloud_particle_count)
+theta = np.random.rand(cloud_particle_count) * 2 * np.pi
+
+
+vr = np.random.rand(cloud_particle_count) * 500 - 250
+vtheta = np.random.rand(cloud_particle_count) * 1000 + 18000
+
+cloud_pos_arr = np.zeros((cloud_particle_count, 2))
+cloud_vel_arr = np.zeros((cloud_particle_count, 2))
+cloud_pos_arr[:, 0] = r * np.cos(theta)
+cloud_pos_arr[:, 1] = r * np.sin(theta)
+cloud_vel_arr[:, 0] = vr * np.cos(theta) - vtheta * np.sin(theta)
+cloud_vel_arr[:, 1] = vr * np.sin(theta) + vtheta * np.cos(theta)
+
+positions = positions + cloud_pos_arr.tolist()
+velocities = velocities + cloud_vel_arr.tolist()
+
+# Make sure that the massive bodies are in the normal positions array
+positions = np.array(massive_body_positions + positions, dtype=np.float32)
+velocities = np.array(massive_body_velocities + velocities, dtype=np.float32)
+massive_body_positions = np.array(massive_body_positions, dtype=np.float32)
+massive_body_velocities = np.array(massive_body_velocities, dtype=np.float32)
+
+
+# Calculates accelerations as a function of position
+def calc_accelerations(positions, massive_body_positions, massive_body_masses):
+    accelerations = np.zeros(positions.shape)
+    
+    def one_body(positions, massive_body_position, mass):
+        displacements = positions - massive_body_position
+        squared_distances = np.power(displacements[:, 0], 2) + np.power(displacements[:, 1], 2)
+        squared_distances[squared_distances == 0] = distance_of_infinity
+        
+        # Extremely important line, otherwise numpy loses it
+        squared_distances = squared_distances[:, np.newaxis]
+        
+        return - mass * (displacements / np.sqrt(squared_distances)) / squared_distances * G
+    
+    for i in range(len(massive_body_masses)):
+        accelerations = accelerations + one_body(positions, massive_body_positions[i, :], massive_body_masses[i])
+    
+    return accelerations
+    
+
+# Update positions and velocities using the runge-kutta method
+def position_updates(positions, velocities, massive_body_positions, massive_body_masses, timestep_size):
+    half_step = timestep_size / 2
+    num_massive_bodies = massive_body_masses.shape[0]
+    
+    k1_x = velocities
+    k1_v = calc_accelerations(positions, massive_body_positions, massive_body_masses)
+    
+    k2_x = velocities + half_step * k1_v
+    k2_v = calc_accelerations(positions + half_step * k1_x, massive_body_positions + half_step * k1_x[:num_massive_bodies, :], massive_body_masses)
+    
+    k3_x = velocities + half_step * k2_v
+    k3_v = calc_accelerations(positions + half_step * k2_x, massive_body_positions + half_step * k2_x[:num_massive_bodies, :], massive_body_masses)
+    
+    k4_x = velocities + timestep_size * k3_v
+    k4_v = calc_accelerations(positions + timestep_size * k3_x, massive_body_positions + timestep_size * k3_x[:num_massive_bodies, :], massive_body_masses)
+    
+    positions = positions + timestep_size / 6 * (k1_x + k2_x * 2 + k3_x * 2 + k4_x)
+    velocities = velocities + timestep_size / 6 * (k1_v + k2_v * 2 + k3_v * 2 + k4_v)
+    
+    return positions, velocities
+    
+
+num_massive_bodies = massive_body_masses.shape[0]
+massive_body_positions = positions[:num_massive_bodies, :]
+massless_body_positions = positions[num_massive_bodies:, :]
+
+fig, ax = plt.subplots(figsize=(10, 10))
+colour_float_array = (1 - np.linspace(0, 1, num_massive_bodies))**2 # Maps onto the colourmap
+colour_float_array[0] = 0.9 # Make the sun a less eyeball scorching yellow
+colour_float_array[num_massive_bodies - 1] = 0.85 # Set the incoming star to yellow
+
+massless_bodies_scatter = ax.scatter(massless_body_positions[:, 0], massless_body_positions[:, 1], s = 1)
+massive_bodies_scatter = ax.scatter(massive_body_positions[:, 0], massive_body_positions[:, 1], s = np.power((massive_body_masses * 10**-20), 0.13) * 2,
+    cmap="autumn", c = colour_float_array)
+time_elapsed_text = ax.text(-48 * au, 46 * au, "t = 0 days", fontsize = 12)
+time_elapsed = 0
+# I need a persistent global scope object to reference with updates
+persistent = [positions, velocities, time_elapsed]
+
+# Initialise graph parameters, but only kind of since some things must be globals
+def init_anim():
+    half_width = canvas_size / 2
+    ax.set_xlim(-half_width, half_width)
+    ax.set_ylim((-half_width, half_width))
+    
+    return massless_bodies_scatter, massive_bodies_scatter, time_elapsed_text
+
+# Update plot each frame
+def update(frame, persistent, massive_body_masses, num_massive_bodies, timestep_size, steps_per_frame = 2):
+    persistent[2] = persistent[2] + timestep_size
+    massive_body_positions = persistent[0][:num_massive_bodies, :]
+    positions, velocities = position_updates(persistent[0], persistent[1], massive_body_positions, massive_body_masses, timestep_size)
+    persistent[0] = positions
+    persistent[1] = velocities
+    
+    for i in range(1, steps_per_frame):
+        persistent[2] = persistent[2] + timestep_size
+        massive_body_positions = persistent[0][:num_massive_bodies, :]
+        positions, velocities = position_updates(persistent[0], persistent[1], massive_body_positions, massive_body_masses, timestep_size)
+        persistent[0] = positions
+        persistent[1] = velocities
+        persistent[2] = persistent[2] + timestep_size
+    
+    massless_bodies_scatter.set_offsets(positions[num_massive_bodies:, :])
+    massive_bodies_scatter.set_offsets(positions[:num_massive_bodies, :])
+    time_elapsed_text.set_text(f"t = {int(persistent[2] / 60 / 60 / 24 / 365.25 * 10) / 10} years")
+    
+    return massless_bodies_scatter, massive_bodies_scatter, time_elapsed_text
+    
+
+
+animation = FuncAnimation(fig, partial(update, persistent = persistent, massive_body_masses = massive_body_masses, num_massive_bodies = massive_body_masses.shape[0],
+    timestep_size = timestep_size, steps_per_frame=80), interval=33, frames = np.arange(1000), init_func=init_anim, blit=True)
+
+plt.show()
+
+#writervideo = FFMpegWriter(fps = 30)
+
+#animation.save("planets_animation.mp4", writer = writervideo, dpi = 200)
