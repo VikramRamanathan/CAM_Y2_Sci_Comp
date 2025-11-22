@@ -27,8 +27,6 @@ massive_body_velocities = [[0, 0], [-13100, 0], [0, 9700], [6800, 0], [0, -5400]
 massive_body_masses = np.array([1988500000 * 10**21, 1898187 * 10**21, 568317 * 10**21, 86813 * 10**21, 102413 * 10**21, 5972.4 * 10**21,
     4867.5 * 10**21, 641.71 * 10**21, 330.11 * 10**21, 13.03 * 10**21, 198850000 * 10**21], dtype=np.float32) # Masses of said massive bodies, arbitrary units
 
-
-
 # Init Asteroid cloud
 
 cloud_particle_count = 30

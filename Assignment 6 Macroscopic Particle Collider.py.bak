@@ -1,5 +1,10 @@
 import numpy as np
 from enum import Enum
+import sys
+import matplotlib.pyplot as plt
+from matplotlib.animation import FuncAnimation, FFMpegWriter
+from functools import partial
+import time
 
 # Simulates 2D collisions, because I enjoy pain, I suppose
 # This is effectively a thermal expansion simulator, with the right hand side wall of the container
@@ -14,6 +19,8 @@ class Collided(Enum):
     COLLISION = 1
     NO_COLLISION = 2
 
+# For equality comparisons, floating point error becomes a problem otherwise
+epsilon = 10**-8
 
 # Not constant, allows for future insertion
 num_grid_rows = 8
@@ -21,11 +28,15 @@ num_grid_cols = 8
 arraygrid = [[[] for i in range(num_grid_rows)] for j in range(num_grid_cols)] # The arraygrid is indexed x, y
 
 # The corners of the grid
-grid_bounds = [0, 0, 7, 7]
+grid_bounds = [0, 0, num_grid_cols - 1, num_grid_rows - 1]
+
+world_lim = 9999
+
+desired_starting_size = 256
 
 # These are consts, that together with the number of rows define the size of the space
-grid_cell_height = 64
-grid_cell_width = 64
+grid_cell_height = desired_starting_size / num_grid_rows
+grid_cell_width = desired_starting_size / num_grid_cols
 
 # Using this class is going to add quite a lot of overhead
 # But it's... fine, probably
@@ -43,7 +54,6 @@ class Particle:
         if self.cell_coords != new_cell_coords:
             curr_cell = arraygrid[self.cell_coords[0] - grid_bounds[0]][self.cell_coords[1] - grid_bounds[1]]
             
-            # TODO test this thing
             if new_cell_coords[0] < grid_bounds[0]:
                 
                 num_new_cols = grid_bounds[0] - new_cell_coords[0]
@@ -67,7 +77,7 @@ class Particle:
                 num_grid_rows = num_grid_rows + num_new_rows
                 arraygrid = [([[]] * num_new_rows) + column for column in arraygrid]
                 
-                grid_bounds[1] = grid_bounds[1] + num_new_rows
+                grid_bounds[1] = grid_bounds[1] - num_new_rows
                 
             elif new_cell_coords[1] > grid_bounds[3]:
                 num_new_rows = new_cell_coords[1] - grid_bounds[3]
@@ -84,6 +94,9 @@ class Particle:
                     self.cell_coords = new_cell_coords
                     curr_cell.pop(i)
                     return num_grid_cols, num_grid_rows, arraygrid
+            
+            print(self.cell_coords, new_cell_coords)
+            print(grid_bounds)
             raise RuntimeError("Particle could not be found in the arraygrid")
         
         return num_grid_cols, num_grid_rows, arraygrid
@@ -98,39 +111,24 @@ class Particle:
         self.radius = radius
         self.cell_coords = cell_coords
 
-particles = []
-num_particles = 25
-avg_init_velocities = 12
-mass = 1
-radius = 20
-for i in range(num_particles):
-    pos = [np.random.uniform() * grid_cell_width * num_grid_cols, np.random.uniform() * grid_cell_height * num_grid_rows]
-    particle = Particle(pos, np.random.uniform(-1, 1, 2) * 2 * avg_init_velocities, mass, radius, grid_cell_height, grid_cell_width)
-    #arraygrid[particle.cell_coords[0] - grid_bounds[0]][particle.cell_coords[1] - grid_bounds[1]].append(particle)
-    
-    # Lists store things by reference anyway, so it's fine
-    particles.append(particle)
-    
-time = 0
-timestep_size = 0.02
 
 # List of 4-tuples, where each tuple defines two pairs of (x, y) coordinates describing the points which the wall lies on
 walls = [[0, 0, 0, num_grid_rows * grid_cell_height], [0, 0, 99999, 0], [0, num_grid_rows * grid_cell_height, 99999, num_grid_rows * grid_cell_height]]
+#walls = [[num_grid_cols * grid_cell_width, 0, num_grid_cols * grid_cell_width, num_grid_rows * grid_cell_height], [0, 0, 99999, 0], [0, num_grid_rows * grid_cell_height, 99999, num_grid_rows * grid_cell_height]]
 
 # 7 tuple, with the 5th number being mass and the 6th and 7th being velocity components. Rotation is not allowed
-moveable_walls = [[num_grid_cols * grid_cell_width, 0, num_grid_cols * grid_cell_width, num_grid_rows * grid_cell_height, 500, 0, 0]]
-
-external_pressure = 100
+moveable_walls = [[num_grid_cols * grid_cell_width, 0, num_grid_cols * grid_cell_width, num_grid_rows * grid_cell_height, 3000, 0, 0]]
+#moveable_walls = [[0, 0, 0, num_grid_rows * grid_cell_height, 500, 0, 0]]
 
 def clamp(n, smallest, largest):
     return max(smallest, min(n, largest))
 
 def get_cells_to_check(x_coord, y_coord, arraygrid, min_x, min_y, max_x, max_y):
     
-    upper_bound_x = clamp(x_coord + 1, min_x, max_x) - grid_bounds[0]
-    lower_bound_x = clamp(x_coord - 1, min_x, max_x) - grid_bounds[0]
-    upper_bound_y = clamp(y_coord + 1, min_y, max_y) - grid_bounds[1]
-    lower_bound_y = clamp(y_coord - 1, min_y, max_y) - grid_bounds[1]
+    upper_bound_x = clamp(x_coord + 1, min_x, max_x)
+    lower_bound_x = clamp(x_coord - 1, min_x, max_x)
+    upper_bound_y = clamp(y_coord + 1, min_y, max_y)
+    lower_bound_y = clamp(y_coord - 1, min_y, max_y)
     
     return [[x, y] for x in range(lower_bound_x, upper_bound_x + 1) for y in range(lower_bound_y, upper_bound_y + 1)]
         
@@ -249,7 +247,10 @@ def get_arclength_to_wall(particle, wall, timestep_size):
             # Give up
             intercept_coeff = timestep_size + 1
         elif wall_line_vector[0] == 0:
-            intercept_coeff = (particle.position[0] - wall[0]) / (-particle.velocity[0])
+            if particle.velocity[0] == 0:
+                intercept_coeff = timestep_size + 1
+            else:
+                intercept_coeff = (particle.position[0] - wall[0]) / (-particle.velocity[0])
         else:
             wall_line_vector_ratio = wall_line_vector[1] / wall_line_vector[0]
             if particle.velocity[1] - wall_line_vector_ratio * particle.velocity[0] == 0:
@@ -294,10 +295,10 @@ def check_for_wall_collisions_and_update(particle, walls, movement_remaining, nu
         
         # Not a strict inequality, or else things will get stuck at walls
         # If we have to go backwards, or have to go forwards too much, we're done
-        if intercept_coeff_1 <= 0 and intercept_coeff_2 <= 0 or intercept_coeff_1 > time_remaining and intercept_coeff_2 > time_remaining:
+        if intercept_coeff_1 <= epsilon and intercept_coeff_2 <= epsilon or intercept_coeff_1 > time_remaining and intercept_coeff_2 > time_remaining:
             continue
         
-        elif intercept_coeff_2 <= 0:
+        elif intercept_coeff_2 <= epsilon:
             intercept_coeffs.append(intercept_coeff_1)
             intercepted_wall_normals.append(normal_1)
         
@@ -332,22 +333,35 @@ def check_for_wall_collisions_and_update(particle, walls, movement_remaining, nu
     # Scuffed check for if it's moveable or not, to account for relative velocities
     if len(nearest_wall) > 4:
         velocity_dot = (particle.velocity[0] - nearest_wall[5]) * nearest_wall_normal[0] + (particle.velocity[1] - nearest_wall[6]) * nearest_wall_normal[1]
+        
+        #velocity_dot = - velocity_dot * (particle.mass - nearest_wall[4]) / (particle.mass + nearest_wall[4])
+        #dvx = 2 * velocity_dot * nearest_wall_normal[0]
+        #dvy = 2 * velocity_dot * nearest_wall_normal[1]
+        
+        velocity_dot = - velocity_dot * nearest_wall[4] / (particle.mass + nearest_wall[4])
+        
+        dvx = 2 * velocity_dot * nearest_wall_normal[0]
+        dvy = 2 * velocity_dot * nearest_wall_normal[1]
+        
+        acceleration = [- dvx * particle.mass / nearest_wall[4], - dvy * particle.mass / nearest_wall[4]]
+        
     else:
-        velocity_dot = particle.velocity[0] * nearest_wall_normal[0] + particle.velocity[1] * nearest_wall_normal[1]
+        velocity_dot = - (particle.velocity[0] * nearest_wall_normal[0] + particle.velocity[1] * nearest_wall_normal[1])
+        dvx = 2 * velocity_dot * nearest_wall_normal[0]
+        dvy = 2 * velocity_dot * nearest_wall_normal[1]
+        acceleration = [0, 0]
     
     # Note that the normal by definition faces outwards, so the dot will be negative, and then flips again when multiplied by the nearest wall normal
     
-    dvx = 2 * velocity_dot * nearest_wall_normal[0]
-    dvy = 2 * velocity_dot * nearest_wall_normal[1]
     
-    particle.velocity[0] = particle.velocity[0] - dvx
-    particle.velocity[1] = particle.velocity[1] - dvy
+    particle.velocity[0] = particle.velocity[0] + dvx
+    particle.velocity[1] = particle.velocity[1] + dvy
+    
     
     num_grid_cols, num_grid_rows, arraygrid = particle.move_particle(hitpos, grid_cell_height, grid_cell_width, num_grid_cols, num_grid_rows, arraygrid)
     
-    # If the wall is stationary this impulse is just ignored
-    impulse = [particle.mass * dvx, particle.mass * dvy]
-    return Collided.COLLISION, 0, impulse, nearest_wall, num_grid_cols, num_grid_rows, arraygrid
+    # If the wall is stationary the accelerationis just ignored
+    return Collided.COLLISION, 0, acceleration, nearest_wall, num_grid_cols, num_grid_rows, arraygrid
     
     
 
@@ -370,13 +384,13 @@ def run_iteration(particles, num_grid_cols, num_grid_rows, arraygrid, timestep_s
         if particle in particles_already_interacted:
             continue
         
-        
         cells_to_check = get_cells_to_check(particle.cell_coords[0], particle.cell_coords[1], arraygrid, *grid_bounds)
         
         # Hardcode checking the current cell first, quite ugly
         # Init array this way to avoid mutating the arraygrid. Could also copy via slicing.
         particles_to_check = []
         particles_to_check = particles_to_check + arraygrid[particle.cell_coords[0] - grid_bounds[0]][particle.cell_coords[1] - grid_bounds[1]]
+        
         for cell_index in cells_to_check:
             # Don't consider the home cell twice
             if cell_index[0] == particle.cell_coords[0] - grid_bounds[0] and cell_index[1] == particle.cell_coords[1] - grid_bounds[1]:
@@ -406,10 +420,9 @@ def run_iteration(particles, num_grid_cols, num_grid_rows, arraygrid, timestep_s
             num_grid_cols, num_grid_rows, arraygrid = output[4], output[5], output[6]
             
             if output[3] in moveable_walls:
-                # Update wall velocity by impulse over wall mass
-                # I know this indexing is a bit horrifying but bear with me
-                output[3][5] = output[3][5] + output[2][0] / output[3][4]
-                output[3][6] = output[3][6] + output[2][1] / output[3][4]
+                # Update wall velocity by delta_v from collision
+                output[3][5] = output[3][5] + output[2][0]
+                output[3][6] = output[3][6] + output[2][1]
         
         else:
             # ALl this work, just to hit this case most of the time, huh
@@ -418,23 +431,153 @@ def run_iteration(particles, num_grid_cols, num_grid_rows, arraygrid, timestep_s
             
             num_grid_cols, num_grid_rows, arraygrid = particles_already_interacted[i].move_particle(new_pos, grid_cell_height, grid_cell_width, num_grid_cols, num_grid_rows, arraygrid)
     
+    for particle in particles:
+        
+        if abs(particle.position[0]) > world_lim or abs(particle.position[1]) > world_lim:
+            arraygrid[particle.cell_coords[0] - grid_bounds[0]][particle.cell_coords[1] - grid_bounds[1]].remove(particle)
+            particles.remove(particle)
+            del particle
+            print("Deleted particle for being out of bounds")
+            print(arraygrid)
+            print(particles)
+    
+    if len(particles) == 0:
+        return None
+    
     return num_grid_cols, num_grid_rows, arraygrid
 
 
-particle_1 = Particle([1, 0], [1000000, 0], 1, 1, grid_cell_height, grid_cell_width)
-particle_2 = Particle([3, 10], [0, 0], 1, 1, grid_cell_height, grid_cell_width)
+time_elapsed = 0
+timestep_size = 1 / 60
 
-arraygrid[particle_1.cell_coords[0] - grid_bounds[0]][particle_1.cell_coords[1] - grid_bounds[1]].append(particle_1)
-arraygrid[particle_2.cell_coords[0] - grid_bounds[0]][particle_2.cell_coords[1] - grid_bounds[1]].append(particle_2)
 
-particles = [particle_1, particle_2]
+#particle_1 = Particle([1, 0], [1, 0], 1, 1, grid_cell_height, grid_cell_width)
+#particle_2 = Particle([3, 10], [0, 0], 1, 1, grid_cell_height, grid_cell_width)
+#particle_3 = Particle([3, 15], [0, 1], 1, 1, grid_cell_height, grid_cell_width)
+#
+#arraygrid[particle_1.cell_coords[0] - grid_bounds[0]][particle_1.cell_coords[1] - grid_bounds[1]].append(particle_1)
+#arraygrid[particle_2.cell_coords[0] - grid_bounds[0]][particle_2.cell_coords[1] - grid_bounds[1]].append(particle_2)
+#arraygrid[particle_3.cell_coords[0] - grid_bounds[0]][particle_3.cell_coords[1] - grid_bounds[1]].append(particle_3)
+#
+#particles = [particle_1, particle_2, particle_3]
 
-for i in range(100):
-    num_grid_cols, num_grid_rows, arraygrid = run_iteration(particles, num_grid_cols, num_grid_rows, arraygrid, 0.01)
-    print(len(arraygrid))
-    print("Particle 1 position is", particle_1.position)
-    print("Particle 1 velocity is", particle_1.velocity)
-    print(moveable_walls)
-
+#for i in range(5):
+#    output = run_iteration(particles, num_grid_cols, num_grid_rows, arraygrid, 0.01)
+#    if output is None:
+#        print("No more particles left, terminating")
+#        sys.exit()
+#    
+#    num_grid_cols, num_grid_rows, arraygrid = output
+#    print(len(arraygrid))
+#    print("Particle 1 position is", particles[0].position)
+#    print("Particle 1 velocity is", particles[0].velocity)
+#    print(moveable_walls)
+#    print(arraygrid)
 
 #print(check_wall(Particle([0, 5], [5, -2], 1, 1, grid_cell_height, grid_cell_width), [0, 0, 10, 0], 1))
+
+
+# TODO Currently the way particle-particle collisions are handled, it's possible for two particles to forecast a collision outside the wall, and promptly warp through the wall
+
+particles = []
+num_particles = 100
+avg_init_velocities = 25
+mass = 1
+radius = 3
+for i in range(num_particles):
+    pos = [np.random.uniform() * (grid_cell_width * num_grid_cols - radius * 2) + radius, np.random.uniform() * (grid_cell_height * num_grid_rows - radius * 2) + radius]
+    particle = Particle(pos, np.random.uniform(-1, 1, 2) * 2 * avg_init_velocities, mass, radius, grid_cell_height, grid_cell_width)
+    arraygrid[particle.cell_coords[0] - grid_bounds[0]][particle.cell_coords[1] - grid_bounds[1]].append(particle)
+    
+    # Lists store things by reference anyway, so it's fine
+    particles.append(particle)
+
+fig, ax = plt.subplots(figsize=(12, 8))
+canvas_width = 300 / 8 * 12
+canvas_height = 300
+canvas_centre = (168, 128)
+
+x_pos_arr = [particle.position[0] for particle in particles]
+y_pos_arr = [particle.position[1] for particle in particles]
+radii = [particle.radius for particle in particles]
+
+particles_plot = ax.scatter(x_pos_arr, y_pos_arr, s = radius * radius * 8.2, c = "steelblue")
+time_elapsed_text = ax.text(0, 270, "t = 0 seconds", fontsize = 12)
+
+walls_plots = []
+for wall in walls:
+    wall_plot = ax.plot((wall[0], wall[2]), (wall[1], wall[3]), "k-")[0]
+    walls_plots.append(wall_plot)
+
+moveable_wall_plots = []
+for moveable_wall in moveable_walls:
+    moveable_wall_plot = ax.plot((moveable_wall[0], moveable_wall[2]), (moveable_wall[1], moveable_wall[3]), "k-")[0]
+    moveable_wall_plots.append(moveable_wall_plot)
+
+# I need a persistent global scope object to reference with updates
+persistent = [particles, num_grid_cols, num_grid_rows, arraygrid, time_elapsed]
+
+
+# Initialise graph parameters, but only kind of since some things must be globals
+def init_anim():
+    half_width = canvas_width / 2
+    half_height = canvas_height / 2
+    ax.set_xlim(-half_width + canvas_centre[0], half_width + canvas_centre[0])
+    ax.set_ylim((-half_height + canvas_centre[1], half_height + canvas_centre[1]))
+    
+    return particles_plot, time_elapsed_text, *moveable_wall_plots
+
+# Update plot each frame
+def update(frame, persistent, timestep_size, steps_per_frame = 1):
+    persistent[4] = persistent[4] + timestep_size
+    particles = persistent[0]
+    num_grid_cols = persistent[1]
+    num_grid_rows = persistent[2]
+    arraygrid = persistent[3]
+    
+    start = time.time()
+    
+    output = run_iteration(particles, num_grid_cols, num_grid_rows, arraygrid, timestep_size)
+    if output is None:
+        print("No more particles left, terminating")
+        sys.exit()
+    
+    num_grid_cols, num_grid_rows, arraygrid = output
+    
+    print(time.time() - start)
+    
+    for i in range(1, steps_per_frame):
+        persistent[4] = persistent[4] + timestep_size
+        output = run_iteration(particles, num_grid_cols, num_grid_rows, arraygrid, timestep_size)
+        if output is None:
+            print("No more particles left, terminating")
+            sys.exit()
+    
+        num_grid_cols, num_grid_rows, arraygrid = output
+    
+    persistent[0] = particles
+    persistent[1] = num_grid_cols
+    persistent[2] = num_grid_rows
+    persistent[3] = arraygrid
+    
+    positions = np.array([particle.position for particle in particles])
+    
+    particles_plot.set_offsets(positions)
+    
+    for i in range(len(moveable_wall_plots)):
+        moveable_wall_plots[i].set_xdata((moveable_walls[i][0], moveable_walls[i][2]))
+        moveable_wall_plots[i].set_ydata((moveable_walls[i][1], moveable_walls[i][3]))
+    
+    time_elapsed_text.set_text(f"t = {int(persistent[4] * 10) / 10} seconds")
+    
+    return particles_plot, time_elapsed_text, *moveable_wall_plots
+    
+
+animation = FuncAnimation(fig, partial(update, persistent = persistent, timestep_size = timestep_size, steps_per_frame=2),
+    interval=1, frames = np.arange(1500), init_func=init_anim, blit=True)
+
+#plt.show()
+
+writervideo = FFMpegWriter(fps = 60)
+
+animation.save("particle_expansion.mp4", writer = writervideo, dpi = 200)

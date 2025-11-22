@@ -137,7 +137,6 @@ def update(frame, persistent, massive_body_masses, num_massive_bodies, timestep_
         positions, velocities = position_updates(persistent[0], persistent[1], massive_body_positions, massive_body_masses, timestep_size)
         persistent[0] = positions
         persistent[1] = velocities
-        persistent[2] = persistent[2] + timestep_size
     
     massless_bodies_scatter.set_offsets(positions[num_massive_bodies:, :])
     massive_bodies_scatter.set_offsets(positions[:num_massive_bodies, :])
