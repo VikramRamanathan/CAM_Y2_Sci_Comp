@@ -261,7 +261,7 @@ def generate_die(dice_string):
 # Returns the dice distribution, as well as the index of the "zero point" of the distribution
 # If the input has no dice it will return [], None and it will be what you deserve
 def parse_input_and_generate_dice(input_string, dice_dict, do_not_convolve = False):
-    dice_regex = "\d+d"
+    dice_regex = "\\d+d"
     
     positive_dice = []
     negative_dice = []
